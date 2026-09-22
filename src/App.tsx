@@ -8,9 +8,9 @@ import {
   OEmbedResponse,
 } from './services/instagramApi';
 import {
-  HomeIcon, SearchIcon, HeartIcon, BookmarkIcon,
-  MoreIcon, PlusIcon, MenuIcon, GridIcon, SettingsIcon,
-  CloseIcon, MessageIcon, ReelsIcon, ShareIcon, CommentIcon
+  HomeIcon, SearchIcon, BookmarkIcon,
+  MenuIcon, SettingsIcon,
+  MessageIcon, ReelsIcon
 } from './components/Icons';
 
 interface SavedEmbed {
@@ -21,6 +21,65 @@ interface SavedEmbed {
 }
 
 type Page = 'home' | 'explore' | 'reels' | 'messages' | 'profile' | 'api';
+
+// Small inline SVG icons to replace emoji
+const ApiIcon = ({ className = 'w-5 h-5' }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 6h16M4 12h16M4 18h10" />
+    <circle cx="20" cy="18" r="2" />
+  </svg>
+);
+
+const CodeIcon = ({ className = 'w-5 h-5' }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="16 18 22 12 16 6" />
+    <polyline points="8 6 2 12 8 18" />
+  </svg>
+);
+
+const SaveIcon = ({ className = 'w-4 h-4' }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
+    <polyline points="17 21 17 13 7 13 7 21" />
+    <polyline points="7 3 7 8 15 8" />
+  </svg>
+);
+
+const LinkIcon = ({ className = 'w-4 h-4' }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+    <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+  </svg>
+);
+
+const WarningIcon = ({ className = 'w-4 h-4' }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+    <line x1="12" y1="9" x2="12" y2="13" />
+    <line x1="12" y1="17" x2="12.01" y2="17" />
+  </svg>
+);
+
+const BoltIcon = ({ className = 'w-4 h-4' }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+  </svg>
+);
+
+const BookIcon = ({ className = 'w-5 h-5' }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
+    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
+  </svg>
+);
+
+const DatabaseIcon = ({ className = 'w-5 h-5' }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <ellipse cx="12" cy="5" rx="9" ry="3" />
+    <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+    <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+  </svg>
+);
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('api');
@@ -147,17 +206,6 @@ function App() {
     setCurrentPage('api');
   };
 
-  const getInitials = (name: string) => name.charAt(0).toUpperCase();
-  const getAvatarGradient = (id: string) => {
-    const gradients = [
-      'from-yellow-400 via-pink-500 to-purple-600',
-      'from-blue-400 via-purple-500 to-pink-500',
-      'from-green-400 via-blue-500 to-purple-500',
-      'from-pink-400 via-red-500 to-yellow-500',
-    ];
-    return gradients[parseInt(id.replace(/\D/g, '')) % gradients.length];
-  };
-
   // Sidebar
   const Sidebar = () => (
     <nav className={`fixed left-0 top-0 h-full bg-white border-r border-gray-200 z-40 flex flex-col transition-all duration-300 ${sidebarCollapsed ? 'w-[72px]' : 'w-[245px]'}`}>
@@ -174,23 +222,50 @@ function App() {
       </div>
 
       <div className="flex-1 px-3 space-y-1">
-        {[
-          { id: 'api' as Page, label: '🔌 API ビューアー', icon: null },
-          { id: 'home' as Page, label: 'ホーム', icon: HomeIcon },
-          { id: 'explore' as Page, label: '検索', icon: SearchIcon },
-          { id: 'reels' as Page, label: 'リール', icon: ReelsIcon },
-          { id: 'messages' as Page, label: 'メッセージ', icon: MessageIcon },
-          { id: 'profile' as Page, label: 'プロフィール', icon: null },
-        ].map((item) => (
-          <button
-            key={item.id}
-            onClick={() => setCurrentPage(item.id)}
-            className={`flex items-center gap-4 w-full px-3 py-3 rounded-lg hover:bg-gray-100 transition-all ${currentPage === item.id ? 'font-bold' : ''}`}
-          >
-            {item.icon ? <item.icon className="w-6 h-6" /> : <span className="w-6 h-6 flex items-center justify-center text-sm">{item.label.charAt(0)}</span>}
-            {!sidebarCollapsed && <span className="text-[15px]">{item.label}</span>}
-          </button>
-        ))}
+        <button
+          onClick={() => setCurrentPage('api')}
+          className={`flex items-center gap-4 w-full px-3 py-3 rounded-lg hover:bg-gray-100 transition-all ${currentPage === 'api' ? 'font-bold' : ''}`}
+        >
+          <ApiIcon className="w-6 h-6" />
+          {!sidebarCollapsed && <span className="text-[15px]">API ビューアー</span>}
+        </button>
+        <button
+          onClick={() => setCurrentPage('home')}
+          className={`flex items-center gap-4 w-full px-3 py-3 rounded-lg hover:bg-gray-100 transition-all ${currentPage === 'home' ? 'font-bold' : ''}`}
+        >
+          <HomeIcon filled={currentPage === 'home'} className="w-6 h-6" />
+          {!sidebarCollapsed && <span className="text-[15px]">ホーム</span>}
+        </button>
+        <button
+          onClick={() => setCurrentPage('explore')}
+          className={`flex items-center gap-4 w-full px-3 py-3 rounded-lg hover:bg-gray-100 transition-all ${currentPage === 'explore' ? 'font-bold' : ''}`}
+        >
+          <SearchIcon className="w-6 h-6" />
+          {!sidebarCollapsed && <span className="text-[15px]">検索</span>}
+        </button>
+        <button
+          onClick={() => setCurrentPage('reels')}
+          className={`flex items-center gap-4 w-full px-3 py-3 rounded-lg hover:bg-gray-100 transition-all ${currentPage === 'reels' ? 'font-bold' : ''}`}
+        >
+          <ReelsIcon filled={currentPage === 'reels'} className="w-6 h-6" />
+          {!sidebarCollapsed && <span className="text-[15px]">リール</span>}
+        </button>
+        <button
+          onClick={() => setCurrentPage('messages')}
+          className={`flex items-center gap-4 w-full px-3 py-3 rounded-lg hover:bg-gray-100 transition-all ${currentPage === 'messages' ? 'font-bold' : ''}`}
+        >
+          <MessageIcon filled={currentPage === 'messages'} className="w-6 h-6" />
+          {!sidebarCollapsed && <span className="text-[15px]">メッセージ</span>}
+        </button>
+        <button
+          onClick={() => setCurrentPage('profile')}
+          className={`flex items-center gap-4 w-full px-3 py-3 rounded-lg hover:bg-gray-100 transition-all ${currentPage === 'profile' ? 'font-bold' : ''}`}
+        >
+          <div className={`w-6 h-6 rounded-full bg-gradient-to-br from-yellow-400 via-pink-500 to-purple-600 flex items-center justify-center ${currentPage === 'profile' ? 'ring-2 ring-black' : ''}`}>
+            <span className="text-white font-bold text-[8px]">Y</span>
+          </div>
+          {!sidebarCollapsed && <span className="text-[15px]">プロフィール</span>}
+        </button>
         <button
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
           className="flex items-center gap-4 w-full px-3 py-3 rounded-lg hover:bg-gray-100 transition-all"
@@ -219,19 +294,19 @@ function App() {
         <div className="flex items-center gap-2 mb-2">
           <div className={`w-2 h-2 rounded-full ${apiInfo.status === 'success' ? 'bg-green-500' : apiInfo.status === 'error' ? 'bg-red-500' : 'bg-blue-500'}`}></div>
           <span className="text-sm font-semibold text-blue-800">Instagram oEmbed API</span>
-          <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">v26.0 • トークン不要</span>
+          <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">v26.0 / トークン不要</span>
         </div>
         <p className="text-xs text-blue-700">
           エンドポイント: <code className="bg-blue-100 px-1 rounded">graph.facebook.com/v26.0/instagram_oembed</code>
-          &nbsp;|&nbsp; リクエスト数: {apiInfo.requestsToday}
-          &nbsp;|&nbsp; 最終リクエスト: {apiInfo.lastRequest || 'なし'}
+          &nbsp;&nbsp;|&nbsp;&nbsp; リクエスト数: {apiInfo.requestsToday}
+          &nbsp;&nbsp;|&nbsp;&nbsp; 最終リクエスト: {apiInfo.lastRequest || 'なし'}
         </p>
       </div>
 
       {/* URL Input */}
       <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
         <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <span className="text-xl">📡</span>
+          <DatabaseIcon className="w-5 h-5 text-gray-700" />
           Instagram投稿をAPIで取得
         </h2>
         <div className="flex flex-col gap-3">
@@ -304,7 +379,8 @@ function App() {
         {error && (
           <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
             <p className="text-sm text-red-700 flex items-center gap-2">
-              <span>⚠️</span> {error}
+              <WarningIcon className="w-4 h-4 flex-shrink-0" />
+              {error}
             </p>
           </div>
         )}
@@ -338,23 +414,25 @@ function App() {
             <div className="flex items-center gap-2">
               <span className="text-xs font-mono bg-green-100 text-green-700 px-2 py-0.5 rounded">200 OK</span>
               <span className="text-xs text-gray-500">
-                {currentEmbed.provider_name} • type: {currentEmbed.type} • width: {currentEmbed.width}px
+                {currentEmbed.provider_name} / type: {currentEmbed.type} / width: {currentEmbed.width}px
               </span>
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={handleSaveEmbed}
-                className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors"
+                className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors flex items-center gap-1"
               >
-                💾 保存
+                <SaveIcon className="w-3 h-3" />
+                保存
               </button>
               <a
                 href={inputUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded hover:bg-gray-200 transition-colors"
+                className="text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded hover:bg-gray-200 transition-colors flex items-center gap-1"
               >
-                🔗 元ページ
+                <LinkIcon className="w-3 h-3" />
+                元ページ
               </a>
             </div>
           </div>
@@ -370,7 +448,7 @@ function App() {
           {/* Raw Response */}
           <details className="border-t border-gray-200">
             <summary className="px-4 py-3 text-xs text-gray-500 cursor-pointer hover:bg-gray-50">
-              📋 レスポンスJSONを表示
+              レスポンスJSONを表示
             </summary>
             <pre className="px-4 py-3 bg-gray-900 text-green-400 text-xs overflow-x-auto max-h-[300px]">
               {JSON.stringify({
@@ -389,7 +467,8 @@ function App() {
       {/* API Documentation */}
       <div className="bg-white border border-gray-200 rounded-lg p-6">
         <h3 className="font-semibold mb-4 flex items-center gap-2">
-          <span>📖</span> API仕様
+          <BookIcon className="w-5 h-5 text-gray-700" />
+          API仕様
         </h3>
         <div className="space-y-4 text-sm">
           <div className="bg-gray-50 rounded-lg p-4">
@@ -450,9 +529,12 @@ function App() {
           </div>
 
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-            <p className="text-xs text-yellow-800">
-              <strong>⚡ 2026年6月15日〜</strong> トークン不要でアクセス可能。レート制限: 1時間あたり1,000リクエスト。
-              App Review不要で公開投稿の埋め込みが可能。
+            <p className="text-xs text-yellow-800 flex items-start gap-2">
+              <BoltIcon className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>
+                <strong>2026年6月15日以降</strong> トークン不要でアクセス可能。レート制限: 1時間あたり1,000リクエスト。
+                App Review不要で公開投稿の埋め込みが可能。
+              </span>
             </p>
           </div>
         </div>
@@ -494,11 +576,11 @@ function App() {
     </div>
   );
 
-  // Home Page (mock feed)
+  // Home Page
   const HomePage = () => (
     <div className="max-w-[470px] mx-auto py-6">
       <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
-        <div className="text-4xl mb-4">🏠</div>
+        <HomeIcon className="w-10 h-10 mx-auto mb-4 text-gray-300" />
         <h2 className="text-lg font-semibold mb-2">ホームフィード</h2>
         <p className="text-sm text-gray-500 mb-4">
           Instagramのホームフィードはログインが必要です。<br/>
@@ -506,9 +588,10 @@ function App() {
         </p>
         <button
           onClick={() => setCurrentPage('api')}
-          className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600"
+          className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 flex items-center gap-2 mx-auto"
         >
-          🔌 APIビューアーへ
+          <ApiIcon className="w-4 h-4" />
+          APIビューアーへ
         </button>
       </div>
     </div>
@@ -518,16 +601,17 @@ function App() {
   const ExplorePage = () => (
     <div className="max-w-[935px] mx-auto px-4 py-6">
       <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
-        <div className="text-4xl mb-4">🔍</div>
+        <SearchIcon className="w-10 h-10 mx-auto mb-4 text-gray-300" />
         <h2 className="text-lg font-semibold mb-2">探索ページ</h2>
         <p className="text-sm text-gray-500 mb-4">
           探索機能にはログインが必要です。
         </p>
         <button
           onClick={() => setCurrentPage('api')}
-          className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600"
+          className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 flex items-center gap-2 mx-auto"
         >
-          🔌 APIで投稿を取得
+          <ApiIcon className="w-4 h-4" />
+          APIで投稿を取得
         </button>
       </div>
     </div>
@@ -537,16 +621,19 @@ function App() {
   const ProfilePage = () => (
     <div className="max-w-[935px] mx-auto px-4 py-8">
       <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
-        <div className="text-4xl mb-4">👤</div>
+        <div className="w-16 h-16 rounded-full bg-gradient-to-br from-yellow-400 via-pink-500 to-purple-600 flex items-center justify-center mx-auto mb-4">
+          <span className="text-white font-bold text-xl">Y</span>
+        </div>
         <h2 className="text-lg font-semibold mb-2">プロフィール</h2>
         <p className="text-sm text-gray-500 mb-4">
           プロフィール機能にはログインが必要です。
         </p>
         <button
           onClick={() => setCurrentPage('api')}
-          className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600"
+          className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 flex items-center gap-2 mx-auto"
         >
-          🔌 APIビューアーへ
+          <ApiIcon className="w-4 h-4" />
+          APIビューアーへ
         </button>
       </div>
     </div>
@@ -556,7 +643,7 @@ function App() {
   const MessagesPage = () => (
     <div className="max-w-[935px] mx-auto px-4 py-8">
       <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
-        <div className="text-4xl mb-4">💬</div>
+        <MessageIcon className="w-10 h-10 mx-auto mb-4 text-gray-300" />
         <h2 className="text-lg font-semibold mb-2">メッセージ</h2>
         <p className="text-sm text-gray-500">
           メッセージ機能にはログインが必要です。
