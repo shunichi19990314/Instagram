@@ -1,178 +1,166 @@
-import { useState, useRef, useEffect } from 'react';
-import { posts as initialPosts, stories, users, currentUser, suggestedUsers, Post } from './data/mockData';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  HomeIcon, SearchIcon, ExploreIcon, ReelsIcon, MessageIcon, HeartIcon,
-  CommentIcon, ShareIcon, BookmarkIcon, MoreIcon, PlusIcon,
-  MenuIcon, GridIcon, SettingsIcon, CloseIcon, VerifiedIcon, EmojiIcon
+  fetchInstagramEmbed,
+  extractShortcode,
+  isValidInstagramUrl,
+  loadInstagramEmbedScript,
+  processEmbeds,
+  OEmbedResponse,
+} from './services/instagramApi';
+import {
+  HomeIcon, SearchIcon, HeartIcon, BookmarkIcon,
+  MoreIcon, PlusIcon, MenuIcon, GridIcon, SettingsIcon,
+  CloseIcon, MessageIcon, ReelsIcon, ShareIcon, CommentIcon
 } from './components/Icons';
 
-type Page = 'home' | 'explore' | 'reels' | 'messages' | 'notifications' | 'create' | 'profile';
+interface SavedEmbed {
+  id: string;
+  url: string;
+  html: string;
+  timestamp: number;
+}
+
+type Page = 'home' | 'explore' | 'reels' | 'messages' | 'profile' | 'api';
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<Page>('home');
-  const [posts, setPosts] = useState<Post[]>(initialPosts);
-  const [activeStory, setActiveStory] = useState<number | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
+  const [currentPage, setCurrentPage] = useState<Page>('api');
+  const [inputUrl, setInputUrl] = useState('');
+  const [currentEmbed, setCurrentEmbed] = useState<OEmbedResponse | null>(null);
+  const [savedEmbeds, setSavedEmbeds] = useState<SavedEmbed[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [storyProgress, setStoryProgress] = useState(0);
-  const storyTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [embedOptions, setEmbedOptions] = useState({
+    maxwidth: 540,
+    hidecaption: false,
+    omitscript: false,
+  });
+  const [apiInfo, setApiInfo] = useState({
+    requestsToday: 0,
+    lastRequest: '',
+    status: 'ready',
+  });
+  const embedContainerRef = useRef<HTMLDivElement>(null);
 
-  // Story timer
+  // Load saved embeds from localStorage
   useEffect(() => {
-    if (activeStory !== null) {
-      setStoryProgress(0);
-      storyTimerRef.current = setInterval(() => {
-        setStoryProgress((prev) => {
-          if (prev >= 100) {
-            if (activeStory < stories.length - 1) {
-              setActiveStory(activeStory + 1);
-              return 0;
-            } else {
-              setActiveStory(null);
-              return 0;
-            }
-          }
-          return prev + 2;
-        });
-      }, 100);
+    const saved = localStorage.getItem('ig_embeds');
+    if (saved) {
+      try {
+        setSavedEmbeds(JSON.parse(saved));
+      } catch { /* ignore */ }
     }
-    return () => {
-      if (storyTimerRef.current) clearInterval(storyTimerRef.current);
+    const apiInfoSaved = localStorage.getItem('ig_api_info');
+    if (apiInfoSaved) {
+      try {
+        setApiInfo(JSON.parse(apiInfoSaved));
+      } catch { /* ignore */ }
+    }
+  }, []);
+
+  // Save embeds to localStorage
+  useEffect(() => {
+    localStorage.setItem('ig_embeds', JSON.stringify(savedEmbeds));
+  }, [savedEmbeds]);
+
+  useEffect(() => {
+    localStorage.setItem('ig_api_info', JSON.stringify(apiInfo));
+  }, [apiInfo]);
+
+  // Load Instagram embed script
+  useEffect(() => {
+    loadInstagramEmbedScript().catch(() => {
+      console.log('Instagram embed script will be loaded on demand');
+    });
+  }, []);
+
+  // Process embeds when content changes
+  useEffect(() => {
+    if (currentEmbed) {
+      processEmbeds();
+    }
+  }, [currentEmbed]);
+
+  const handleFetchEmbed = useCallback(async () => {
+    setError('');
+    const url = inputUrl.trim();
+
+    if (!url) {
+      setError('Instagramの投稿URLを入力してください');
+      return;
+    }
+
+    if (!isValidInstagramUrl(url)) {
+      setError('有効なInstagramの投稿URLを入力してください（例: https://www.instagram.com/p/xxxxx/）');
+      return;
+    }
+
+    setLoading(true);
+    setCurrentEmbed(null);
+
+    try {
+      const data = await fetchInstagramEmbed(url, embedOptions);
+      setCurrentEmbed(data);
+      setApiInfo((prev) => ({
+        ...prev,
+        requestsToday: prev.requestsToday + 1,
+        lastRequest: new Date().toLocaleString('ja-JP'),
+        status: 'success',
+      }));
+    } catch (err: any) {
+      setError(err.message || '埋め込みの取得に失敗しました');
+      setApiInfo((prev) => ({
+        ...prev,
+        status: 'error',
+        lastRequest: new Date().toLocaleString('ja-JP'),
+      }));
+    } finally {
+      setLoading(false);
+    }
+  }, [inputUrl, embedOptions]);
+
+  const handleSaveEmbed = () => {
+    if (!currentEmbed || !inputUrl) return;
+    const newEmbed: SavedEmbed = {
+      id: Date.now().toString(),
+      url: inputUrl,
+      html: currentEmbed.html,
+      timestamp: Date.now(),
     };
-  }, [activeStory]);
-
-  const handleLike = (postId: string) => {
-    setPosts((prev) =>
-      prev.map((p) =>
-        p.id === postId
-          ? { ...p, liked: !p.liked, likes: p.liked ? p.likes - 1 : p.likes + 1 }
-          : p
-      )
-    );
+    setSavedEmbeds((prev) => [newEmbed, ...prev]);
   };
 
-  const handleSave = (postId: string) => {
-    setPosts((prev) =>
-      prev.map((p) => (p.id === postId ? { ...p, saved: !p.saved } : p))
-    );
+  const handleDeleteSaved = (id: string) => {
+    setSavedEmbeds((prev) => prev.filter((e) => e.id !== id));
   };
 
-  const handleComment = (postId: string) => {
-    const text = commentInputs[postId]?.trim();
-    if (!text) return;
-    setPosts((prev) =>
-      prev.map((p) =>
-        p.id === postId
-          ? {
-              ...p,
-              comments: [
-                ...p.comments,
-                {
-                  id: `c_${Date.now()}`,
-                  user: currentUser,
-                  text,
-                  time: 'たった今',
-                  likes: 0,
-                },
-              ],
-            }
-          : p
-      )
-    );
-    setCommentInputs((prev) => ({ ...prev, [postId]: '' }));
+  const handleLoadSaved = (embed: SavedEmbed) => {
+    setInputUrl(embed.url);
+    setCurrentEmbed({
+      html: embed.html,
+      provider_name: 'Instagram',
+      provider_url: 'https://www.instagram.com',
+      type: 'rich',
+      version: '1.0',
+      width: embedOptions.maxwidth,
+    });
+    setCurrentPage('api');
   };
 
-  const getInitials = (name: string) => {
-    return name.charAt(0).toUpperCase();
-  };
-
+  const getInitials = (name: string) => name.charAt(0).toUpperCase();
   const getAvatarGradient = (id: string) => {
     const gradients = [
       'from-yellow-400 via-pink-500 to-purple-600',
       'from-blue-400 via-purple-500 to-pink-500',
       'from-green-400 via-blue-500 to-purple-500',
       'from-pink-400 via-red-500 to-yellow-500',
-      'from-indigo-400 via-purple-500 to-pink-500',
     ];
-    const index = parseInt(id.replace(/\D/g, '')) % gradients.length;
-    return gradients[index];
-  };
-
-  const Avatar: React.FC<{ user: { id: string; username: string }; size?: string; hasStory?: boolean; viewed?: boolean }> = ({ user, size = 'w-8 h-8', hasStory, viewed }) => (
-    <div className={`relative ${hasStory ? 'p-[2px] rounded-full bg-gradient-to-tr ' + (viewed ? 'from-gray-300 to-gray-400' : 'from-yellow-400 via-pink-500 to-purple-600') : ''}`}>
-      <div className={`${size} rounded-full bg-gradient-to-br ${getAvatarGradient(user.id)} flex items-center justify-center ${hasStory ? 'border-2 border-white' : ''}`}>
-        <span className="text-white font-bold text-xs">{getInitials(user.username)}</span>
-      </div>
-    </div>
-  );
-
-  // Story Viewer Modal
-  const StoryViewer = () => {
-    if (activeStory === null) return null;
-    const story = stories[activeStory];
-
-    return (
-      <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center">
-        <button
-          onClick={() => setActiveStory(null)}
-          className="absolute top-4 right-4 text-white z-50 hover:opacity-70"
-        >
-          <CloseIcon className="w-8 h-8" />
-        </button>
-        <div className="relative w-full max-w-[420px] h-[90vh] max-h-[750px] bg-gray-900 rounded-lg overflow-hidden">
-          {/* Progress bars */}
-          <div className="absolute top-2 left-2 right-2 flex gap-1 z-10">
-            {stories.map((_, idx) => (
-              <div key={idx} className="flex-1 h-[2px] bg-white/30 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-white rounded-full transition-all duration-100"
-                  style={{
-                    width: idx < activeStory ? '100%' : idx === activeStory ? `${storyProgress}%` : '0%',
-                  }}
-                />
-              </div>
-            ))}
-          </div>
-          {/* User info */}
-          <div className="absolute top-6 left-4 flex items-center gap-2 z-10">
-            <Avatar user={story.user} size="w-8 h-8" />
-            <span className="text-white text-sm font-semibold">{story.user.username}</span>
-            <span className="text-white/60 text-xs">2時間</span>
-          </div>
-          {/* Story image */}
-          <img
-            src={story.image}
-            alt="Story"
-            className="w-full h-full object-cover"
-          />
-          {/* Navigation */}
-          <button
-            className="absolute left-0 top-0 bottom-0 w-1/3 z-10"
-            onClick={() => activeStory > 0 && setActiveStory(activeStory - 1)}
-          />
-          <button
-            className="absolute right-0 top-0 bottom-0 w-1/3 z-10"
-            onClick={() => activeStory < stories.length - 1 && setActiveStory(activeStory + 1)}
-          />
-          {/* Reply input */}
-          <div className="absolute bottom-4 left-4 right-4 z-10">
-            <input
-              type="text"
-              placeholder="メッセージを送信..."
-              className="w-full px-4 py-2 rounded-full border border-white/40 bg-transparent text-white text-sm placeholder-white/60 focus:outline-none focus:border-white"
-            />
-          </div>
-        </div>
-      </div>
-    );
+    return gradients[parseInt(id.replace(/\D/g, '')) % gradients.length];
   };
 
   // Sidebar
   const Sidebar = () => (
-    <nav className={`fixed left-0 top-0 h-full bg-white border-r border-gray-200 z-40 flex flex-col transition-all duration-300 ${sidebarCollapsed ? 'w-[72px]' : 'w-[245px] xl:w-[245px]'}`}>
-      {/* Logo */}
+    <nav className={`fixed left-0 top-0 h-full bg-white border-r border-gray-200 z-40 flex flex-col transition-all duration-300 ${sidebarCollapsed ? 'w-[72px]' : 'w-[245px]'}`}>
       <div className="px-3 pt-8 pb-4">
         {sidebarCollapsed ? (
           <div className="w-6 h-6 mx-auto">
@@ -181,63 +169,28 @@ function App() {
             </svg>
           </div>
         ) : (
-          <h1 className="text-2xl font-semibold px-3" style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
-            Instagram
-          </h1>
+          <h1 className="text-2xl font-semibold px-3" style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}>Instagram</h1>
         )}
       </div>
 
-      {/* Nav items */}
       <div className="flex-1 px-3 space-y-1">
         {[
-          { id: 'home' as Page, icon: HomeIcon, label: 'ホーム', filled: true },
-          { id: 'explore' as Page, icon: SearchIcon, label: '検索' },
-          { id: 'explore' as Page, icon: ExploreIcon, label: '探索' },
-          { id: 'reels' as Page, icon: ReelsIcon, label: 'リール' },
-          { id: 'messages' as Page, icon: MessageIcon, label: 'メッセージ' },
-          { id: 'notifications' as Page, icon: HeartIcon, label: '通知' },
-          { id: 'create' as Page, icon: PlusIcon, label: '作成' },
-        ].map((item, idx) => {
-          if (idx === 2) return null; // Skip duplicate explore
-          const Icon = item.icon;
-          const isActive = currentPage === item.id;
-          return (
-            <button
-              key={idx}
-              onClick={() => {
-                setCurrentPage(item.id);
-                if (item.id === 'notifications') setShowNotifications(!showNotifications);
-              }}
-              className={`flex items-center gap-4 w-full px-3 py-3 rounded-lg hover:bg-gray-100 transition-all group ${isActive ? 'font-bold' : ''}`}
-            >
-              {item.id === 'home' ? (
-                <HomeIcon filled={isActive} className="w-6 h-6" />
-              ) : item.id === 'notifications' ? (
-                <HeartIcon filled={isActive} className="w-6 h-6" />
-              ) : item.id === 'reels' ? (
-                <ReelsIcon filled={isActive} className="w-6 h-6" />
-              ) : (
-                <Icon className="w-6 h-6" />
-              )}
-              {!sidebarCollapsed && (
-                <span className="text-[15px]">{item.label}</span>
-              )}
-            </button>
-          );
-        })}
-
-        {/* Profile */}
-        <button
-          onClick={() => setCurrentPage('profile')}
-          className={`flex items-center gap-4 w-full px-3 py-3 rounded-lg hover:bg-gray-100 transition-all ${currentPage === 'profile' ? 'font-bold' : ''}`}
-        >
-          <div className={`w-6 h-6 rounded-full bg-gradient-to-br ${getAvatarGradient('me')} flex items-center justify-center ${currentPage === 'profile' ? 'ring-2 ring-black' : ''}`}>
-            <span className="text-white font-bold text-[8px]">Y</span>
-          </div>
-          {!sidebarCollapsed && <span className="text-[15px]">プロフィール</span>}
-        </button>
-
-        {/* More */}
+          { id: 'api' as Page, label: '🔌 API ビューアー', icon: null },
+          { id: 'home' as Page, label: 'ホーム', icon: HomeIcon },
+          { id: 'explore' as Page, label: '検索', icon: SearchIcon },
+          { id: 'reels' as Page, label: 'リール', icon: ReelsIcon },
+          { id: 'messages' as Page, label: 'メッセージ', icon: MessageIcon },
+          { id: 'profile' as Page, label: 'プロフィール', icon: null },
+        ].map((item) => (
+          <button
+            key={item.id}
+            onClick={() => setCurrentPage(item.id)}
+            className={`flex items-center gap-4 w-full px-3 py-3 rounded-lg hover:bg-gray-100 transition-all ${currentPage === item.id ? 'font-bold' : ''}`}
+          >
+            {item.icon ? <item.icon className="w-6 h-6" /> : <span className="w-6 h-6 flex items-center justify-center text-sm">{item.label.charAt(0)}</span>}
+            {!sidebarCollapsed && <span className="text-[15px]">{item.label}</span>}
+          </button>
+        ))}
         <button
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
           className="flex items-center gap-4 w-full px-3 py-3 rounded-lg hover:bg-gray-100 transition-all"
@@ -247,7 +200,6 @@ function App() {
         </button>
       </div>
 
-      {/* Bottom */}
       {!sidebarCollapsed && (
         <div className="px-3 pb-6">
           <button className="flex items-center gap-4 w-full px-3 py-3 rounded-lg hover:bg-gray-100 transition-all">
@@ -259,601 +211,378 @@ function App() {
     </nav>
   );
 
-  // Stories Bar
-  const StoriesBar = () => (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
-      <div className="flex gap-4 overflow-x-auto scrollbar-hide">
-        {/* Your story */}
-        <div className="flex flex-col items-center gap-1 flex-shrink-0 cursor-pointer">
-          <div className="relative">
-            <div className={`w-16 h-16 rounded-full bg-gradient-to-br ${getAvatarGradient('me')} flex items-center justify-center`}>
-              <span className="text-white font-bold">Y</span>
-            </div>
-            <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 bg-blue-500 rounded-full border-2 border-white flex items-center justify-center">
-              <span className="text-white text-xs font-bold">+</span>
-            </div>
-          </div>
-          <span className="text-xs text-gray-600 w-16 text-center truncate">あなたのストーリー</span>
+  // API Viewer Page (Main feature)
+  const ApiViewerPage = () => (
+    <div className="max-w-[935px] mx-auto px-4 py-6">
+      {/* API Status Banner */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <div className="flex items-center gap-2 mb-2">
+          <div className={`w-2 h-2 rounded-full ${apiInfo.status === 'success' ? 'bg-green-500' : apiInfo.status === 'error' ? 'bg-red-500' : 'bg-blue-500'}`}></div>
+          <span className="text-sm font-semibold text-blue-800">Instagram oEmbed API</span>
+          <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">v26.0 • トークン不要</span>
         </div>
-        {/* Other stories */}
-        {stories.map((story, idx) => (
-          <div
-            key={story.id}
-            className="flex flex-col items-center gap-1 flex-shrink-0 cursor-pointer"
-            onClick={() => setActiveStory(idx)}
-          >
-            <Avatar user={story.user} size="w-16 h-16" hasStory viewed={story.viewed} />
-            <span className="text-xs text-gray-600 w-16 text-center truncate">{story.user.username}</span>
-          </div>
-        ))}
+        <p className="text-xs text-blue-700">
+          エンドポイント: <code className="bg-blue-100 px-1 rounded">graph.facebook.com/v26.0/instagram_oembed</code>
+          &nbsp;|&nbsp; リクエスト数: {apiInfo.requestsToday}
+          &nbsp;|&nbsp; 最終リクエスト: {apiInfo.lastRequest || 'なし'}
+        </p>
       </div>
-    </div>
-  );
 
-  // Post Component
-  const PostCard: React.FC<{ post: Post }> = ({ post }) => {
-    const [showAllComments, setShowAllComments] = useState(false);
-    const [isDoubleTapLiked, setIsDoubleTapLiked] = useState(false);
-
-    const handleDoubleTap = () => {
-      if (!post.liked) handleLike(post.id);
-      setIsDoubleTapLiked(true);
-      setTimeout(() => setIsDoubleTapLiked(false), 1000);
-    };
-
-    return (
-      <article className="bg-white border border-gray-200 rounded-lg mb-4">
-        {/* Header */}
-        <div className="flex items-center justify-between p-3">
-          <div className="flex items-center gap-3">
-            <Avatar user={post.user} size="w-8 h-8" hasStory />
-            <div>
-              <div className="flex items-center gap-1">
-                <span className="text-sm font-semibold">{post.user.username}</span>
-                {post.user.isVerified && <VerifiedIcon />}
-              </div>
-              {post.location && (
-                <span className="text-xs text-gray-500">{post.location}</span>
-              )}
-            </div>
-          </div>
-          <button className="hover:opacity-50">
-            <MoreIcon className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Image */}
-        <div
-          className="relative aspect-square bg-gray-100 cursor-pointer"
-          onDoubleClick={handleDoubleTap}
-        >
-          <img
-            src={post.images[0]}
-            alt="Post"
-            className="w-full h-full object-cover"
-            loading="lazy"
-          />
-          {/* Double tap heart animation */}
-          {isDoubleTapLiked && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <HeartIcon filled className="w-24 h-24 text-white drop-shadow-lg animate-ping" />
-            </div>
-          )}
-        </div>
-
-        {/* Actions */}
-        <div className="p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-4">
-              <button onClick={() => handleLike(post.id)} className="hover:opacity-50 transition-opacity">
-                <HeartIcon filled={post.liked} className={`w-6 h-6 ${post.liked ? 'text-red-500' : ''}`} />
-              </button>
-              <button className="hover:opacity-50 transition-opacity">
-                <CommentIcon className="w-6 h-6" />
-              </button>
-              <button className="hover:opacity-50 transition-opacity">
-                <ShareIcon className="w-6 h-6" />
-              </button>
-            </div>
-            <button onClick={() => handleSave(post.id)} className="hover:opacity-50 transition-opacity">
-              <BookmarkIcon filled={post.saved} className="w-6 h-6" />
-            </button>
-          </div>
-
-          {/* Likes */}
-          <p className="text-sm font-semibold mb-1">
-            {post.likes.toLocaleString()} いいね！
-          </p>
-
-          {/* Caption */}
-          <div className="text-sm">
-            <span className="font-semibold mr-1">{post.user.username}</span>
-            <span className="text-gray-800">{post.caption}</span>
-          </div>
-
-          {/* Comments */}
-          {post.comments.length > 2 && !showAllComments && (
+      {/* URL Input */}
+      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+          <span className="text-xl">📡</span>
+          Instagram投稿をAPIで取得
+        </h2>
+        <div className="flex flex-col gap-3">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={inputUrl}
+              onChange={(e) => setInputUrl(e.target.value)}
+              placeholder="https://www.instagram.com/p/xxxxx/"
+              className="flex-1 px-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              onKeyDown={(e) => e.key === 'Enter' && handleFetchEmbed()}
+            />
             <button
-              onClick={() => setShowAllComments(true)}
-              className="text-sm text-gray-500 mt-1 hover:text-gray-700"
+              onClick={handleFetchEmbed}
+              disabled={loading}
+              className="px-6 py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2"
             >
-              コメント{post.comments.length}件をすべて表示
+              {loading ? (
+                <>
+                  <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
+                    <path d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" fill="currentColor" className="opacity-75" />
+                  </svg>
+                  取得中...
+                </>
+              ) : (
+                <>
+                  <SearchIcon className="w-4 h-4" />
+                  API呼び出し
+                </>
+              )}
             </button>
-          )}
-          <div className="mt-1 space-y-1">
-            {(showAllComments ? post.comments : post.comments.slice(-2)).map((comment) => (
-              <div key={comment.id} className="text-sm flex items-start gap-1">
-                <span className="font-semibold flex-shrink-0">{comment.user.username}</span>
-                <span className="text-gray-800">{comment.text}</span>
+          </div>
+
+          {/* Options */}
+          <div className="flex flex-wrap gap-4 items-center pt-2 border-t border-gray-100">
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-gray-600">maxwidth:</span>
+              <input
+                type="range"
+                min="320"
+                max="658"
+                value={embedOptions.maxwidth}
+                onChange={(e) => setEmbedOptions((prev) => ({ ...prev, maxwidth: parseInt(e.target.value) }))}
+                className="w-24"
+              />
+              <span className="text-gray-800 font-mono text-xs">{embedOptions.maxwidth}px</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={embedOptions.hidecaption}
+                onChange={(e) => setEmbedOptions((prev) => ({ ...prev, hidecaption: e.target.checked }))}
+                className="rounded"
+              />
+              <span className="text-gray-600">hidecaption</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={embedOptions.omitscript}
+                onChange={(e) => setEmbedOptions((prev) => ({ ...prev, omitscript: e.target.checked }))}
+                className="rounded"
+              />
+              <span className="text-gray-600">omitscript</span>
+            </label>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+            <p className="text-sm text-red-700 flex items-center gap-2">
+              <span>⚠️</span> {error}
+            </p>
+          </div>
+        )}
+
+        {/* Sample URLs */}
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <p className="text-xs text-gray-500 mb-2">サンプルURL（クリックで入力）:</p>
+          <div className="flex flex-wrap gap-2">
+            {[
+              'https://www.instagram.com/p/DFz9aIuySCT/',
+              'https://www.instagram.com/reel/DFxKJpOyGQN/',
+              'https://www.instagram.com/p/DFwLmAxS5jM/',
+            ].map((url) => (
+              <button
+                key={url}
+                onClick={() => setInputUrl(url)}
+                className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-600 transition-colors truncate max-w-[200px]"
+              >
+                {extractShortcode(url)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* API Response */}
+      {currentEmbed && (
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden mb-6">
+          {/* Response Header */}
+          <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono bg-green-100 text-green-700 px-2 py-0.5 rounded">200 OK</span>
+              <span className="text-xs text-gray-500">
+                {currentEmbed.provider_name} • type: {currentEmbed.type} • width: {currentEmbed.width}px
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSaveEmbed}
+                className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors"
+              >
+                💾 保存
+              </button>
+              <a
+                href={inputUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded hover:bg-gray-200 transition-colors"
+              >
+                🔗 元ページ
+              </a>
+            </div>
+          </div>
+
+          {/* Embed Content */}
+          <div ref={embedContainerRef} className="p-6 flex justify-center min-h-[300px] bg-white">
+            <div
+              className="instagram-embed-container"
+              dangerouslySetInnerHTML={{ __html: currentEmbed.html }}
+            />
+          </div>
+
+          {/* Raw Response */}
+          <details className="border-t border-gray-200">
+            <summary className="px-4 py-3 text-xs text-gray-500 cursor-pointer hover:bg-gray-50">
+              📋 レスポンスJSONを表示
+            </summary>
+            <pre className="px-4 py-3 bg-gray-900 text-green-400 text-xs overflow-x-auto max-h-[300px]">
+              {JSON.stringify({
+                html: currentEmbed.html.substring(0, 200) + '...',
+                provider_name: currentEmbed.provider_name,
+                provider_url: currentEmbed.provider_url,
+                type: currentEmbed.type,
+                version: currentEmbed.version,
+                width: currentEmbed.width,
+              }, null, 2)}
+            </pre>
+          </details>
+        </div>
+      )}
+
+      {/* API Documentation */}
+      <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <h3 className="font-semibold mb-4 flex items-center gap-2">
+          <span>📖</span> API仕様
+        </h3>
+        <div className="space-y-4 text-sm">
+          <div className="bg-gray-50 rounded-lg p-4">
+            <p className="font-mono text-xs text-gray-600 mb-2">ENDPOINT</p>
+            <code className="text-sm text-blue-600">GET https://graph.facebook.com/v26.0/instagram_oembed</code>
+          </div>
+
+          <div>
+            <p className="font-semibold mb-2">パラメータ</p>
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="text-left py-2 pr-4">名前</th>
+                  <th className="text-left py-2 pr-4">型</th>
+                  <th className="text-left py-2 pr-4">必須</th>
+                  <th className="text-left py-2">説明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-gray-100">
+                  <td className="py-2 pr-4 font-mono text-blue-600">url</td>
+                  <td className="py-2 pr-4">URI</td>
+                  <td className="py-2 pr-4"><span className="bg-red-100 text-red-600 px-1 rounded">必須</span></td>
+                  <td className="py-2">投稿のURL</td>
+                </tr>
+                <tr className="border-b border-gray-100">
+                  <td className="py-2 pr-4 font-mono text-blue-600">maxwidth</td>
+                  <td className="py-2 pr-4">int64</td>
+                  <td className="py-2 pr-4"><span className="bg-gray-100 text-gray-600 px-1 rounded">任意</span></td>
+                  <td className="py-2">最大幅 (320-658)</td>
+                </tr>
+                <tr className="border-b border-gray-100">
+                  <td className="py-2 pr-4 font-mono text-blue-600">hidecaption</td>
+                  <td className="py-2 pr-4">boolean</td>
+                  <td className="py-2 pr-4"><span className="bg-gray-100 text-gray-600 px-1 rounded">任意</span></td>
+                  <td className="py-2">キャプションを非表示</td>
+                </tr>
+                <tr>
+                  <td className="py-2 pr-4 font-mono text-blue-600">omitscript</td>
+                  <td className="py-2 pr-4">boolean</td>
+                  <td className="py-2 pr-4"><span className="bg-gray-100 text-gray-600 px-1 rounded">任意</span></td>
+                  <td className="py-2">JSを含まないHTMLを返す</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <p className="font-semibold mb-2">レスポンスフィールド</p>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="bg-gray-50 p-2 rounded"><code className="text-blue-600">html</code> - 埋め込みHTML</div>
+              <div className="bg-gray-50 p-2 rounded"><code className="text-blue-600">provider_name</code> - "Instagram"</div>
+              <div className="bg-gray-50 p-2 rounded"><code className="text-blue-600">provider_url</code> - Instagram URL</div>
+              <div className="bg-gray-50 p-2 rounded"><code className="text-blue-600">type</code> - "rich"</div>
+              <div className="bg-gray-50 p-2 rounded"><code className="text-blue-600">version</code> - "1.0"</div>
+              <div className="bg-gray-50 p-2 rounded"><code className="text-blue-600">width</code> - 幅(px)</div>
+            </div>
+          </div>
+
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+            <p className="text-xs text-yellow-800">
+              <strong>⚡ 2026年6月15日〜</strong> トークン不要でアクセス可能。レート制限: 1時間あたり1,000リクエスト。
+              App Review不要で公開投稿の埋め込みが可能。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Saved Embeds */}
+      {savedEmbeds.length > 0 && (
+        <div className="bg-white border border-gray-200 rounded-lg p-6 mt-6">
+          <h3 className="font-semibold mb-4 flex items-center gap-2">
+            <BookmarkIcon filled className="w-5 h-5" />
+            保存した埋め込み ({savedEmbeds.length})
+          </h3>
+          <div className="space-y-2">
+            {savedEmbeds.map((embed) => (
+              <div key={embed.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-gray-800 truncate">{embed.url}</p>
+                  <p className="text-xs text-gray-500">{new Date(embed.timestamp).toLocaleString('ja-JP')}</p>
+                </div>
+                <div className="flex items-center gap-2 ml-2">
+                  <button
+                    onClick={() => handleLoadSaved(embed)}
+                    className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100"
+                  >
+                    表示
+                  </button>
+                  <button
+                    onClick={() => handleDeleteSaved(embed.id)}
+                    className="text-xs px-3 py-1.5 bg-red-50 text-red-600 rounded hover:bg-red-100"
+                  >
+                    削除
+                  </button>
+                </div>
               </div>
             ))}
           </div>
-
-          {/* Time */}
-          <p className="text-[10px] text-gray-400 uppercase mt-2">{post.time}前</p>
-
-          {/* Comment input */}
-          <div className="flex items-center gap-3 mt-3 pt-3 border-t border-gray-100">
-            <EmojiIcon className="w-5 h-5 text-gray-500" />
-            <input
-              type="text"
-              placeholder="コメントを追加..."
-              value={commentInputs[post.id] || ''}
-              onChange={(e) => setCommentInputs((prev) => ({ ...prev, [post.id]: e.target.value }))}
-              onKeyDown={(e) => e.key === 'Enter' && handleComment(post.id)}
-              className="flex-1 text-sm outline-none placeholder-gray-400"
-            />
-            {commentInputs[post.id]?.trim() && (
-              <button
-                onClick={() => handleComment(post.id)}
-                className="text-sm font-semibold text-blue-500 hover:text-blue-700"
-              >
-                投稿
-              </button>
-            )}
-          </div>
         </div>
-      </article>
-    );
-  };
+      )}
+    </div>
+  );
 
-  // Right Sidebar
-  const RightSidebar = () => (
-    <aside className="hidden lg:block w-[320px] ml-8 mt-8 flex-shrink-0">
-      <div className="fixed w-[320px]">
-        {/* Current user */}
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-3">
-            <div className={`w-11 h-11 rounded-full bg-gradient-to-br ${getAvatarGradient('me')} flex items-center justify-center`}>
-              <span className="text-white font-bold text-sm">Y</span>
-            </div>
-            <div>
-              <p className="text-sm font-semibold">{currentUser.username}</p>
-              <p className="text-sm text-gray-500">{currentUser.displayName}</p>
-            </div>
-          </div>
-          <button className="text-xs font-semibold text-blue-500 hover:text-blue-700">
-            切り替え
-          </button>
-        </div>
-
-        {/* Suggestions */}
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-sm font-semibold text-gray-500">あなたへの提案</span>
-          <button className="text-xs font-semibold hover:text-gray-500">すべて表示</button>
-        </div>
-
-        <div className="space-y-3">
-          {suggestedUsers.map((user) => (
-            <div key={user.id} className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Avatar user={user} size="w-8 h-8" />
-                <div>
-                  <div className="flex items-center gap-1">
-                    <p className="text-sm font-semibold">{user.username}</p>
-                    {user.isVerified && <VerifiedIcon />}
-                  </div>
-                  <p className="text-xs text-gray-500">あなたへの提案</p>
-                </div>
-              </div>
-              <button className="text-xs font-semibold text-blue-500 hover:text-blue-700">
-                フォロー
-              </button>
-            </div>
-          ))}
-        </div>
-
-        {/* Footer */}
-        <div className="mt-6">
-          <div className="flex flex-wrap gap-1 text-[11px] text-gray-300">
-            <span>About</span>·<span>Help</span>·<span>Press</span>·<span>API</span>·<span>Jobs</span>·<span>Privacy</span>·<span>Terms</span>·<span>Locations</span>·<span>Language</span>
-          </div>
-          <p className="text-[11px] text-gray-300 mt-4">© 2024 INSTAGRAM FROM META</p>
-        </div>
+  // Home Page (mock feed)
+  const HomePage = () => (
+    <div className="max-w-[470px] mx-auto py-6">
+      <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
+        <div className="text-4xl mb-4">🏠</div>
+        <h2 className="text-lg font-semibold mb-2">ホームフィード</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Instagramのホームフィードはログインが必要です。<br/>
+          APIビューアーで公開投稿を表示できます。
+        </p>
+        <button
+          onClick={() => setCurrentPage('api')}
+          className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600"
+        >
+          🔌 APIビューアーへ
+        </button>
       </div>
-    </aside>
+    </div>
   );
 
   // Explore Page
   const ExplorePage = () => (
     <div className="max-w-[935px] mx-auto px-4 py-6">
-      {/* Search bar */}
-      <div className="mb-6">
-        <div className="relative">
-          <SearchIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            type="text"
-            placeholder="検索"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 bg-gray-100 rounded-lg text-sm outline-none focus:bg-gray-50 border border-transparent focus:border-gray-300"
-          />
-        </div>
-      </div>
-
-      {/* Grid */}
-      <div className="grid grid-cols-3 gap-1">
-        {[...posts, ...posts].map((post, idx) => (
-          <div key={idx} className="aspect-square bg-gray-100 relative group cursor-pointer overflow-hidden">
-            <img src={post.images[0]} alt="" className="w-full h-full object-cover" />
-            <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-6">
-              <div className="flex items-center gap-1 text-white font-bold">
-                <HeartIcon filled className="w-5 h-5" />
-                <span>{post.likes.toLocaleString()}</span>
-              </div>
-              <div className="flex items-center gap-1 text-white font-bold">
-                <CommentIcon className="w-5 h-5" />
-                <span>{post.comments.length}</span>
-              </div>
-            </div>
-          </div>
-        ))}
+      <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
+        <div className="text-4xl mb-4">🔍</div>
+        <h2 className="text-lg font-semibold mb-2">探索ページ</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          探索機能にはログインが必要です。
+        </p>
+        <button
+          onClick={() => setCurrentPage('api')}
+          className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600"
+        >
+          🔌 APIで投稿を取得
+        </button>
       </div>
     </div>
   );
 
   // Profile Page
-  const ProfilePage = () => {
-    const [profileTab, setProfileTab] = useState<'posts' | 'saved' | 'tagged'>('posts');
-
-    return (
-      <div className="max-w-[935px] mx-auto px-4 py-8">
-        {/* Profile Header */}
-        <div className="flex items-start gap-8 mb-10">
-          <div className={`w-20 h-20 sm:w-36 sm:h-36 rounded-full bg-gradient-to-br ${getAvatarGradient('me')} flex items-center justify-center flex-shrink-0`}>
-            <span className="text-white font-bold text-3xl sm:text-5xl">Y</span>
-          </div>
-          <div className="flex-1">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-4">
-              <h2 className="text-xl font-light">{currentUser.username}</h2>
-              <div className="flex gap-2">
-                <button className="px-4 py-1.5 bg-gray-100 rounded-lg text-sm font-semibold hover:bg-gray-200">
-                  エディット
-                </button>
-                <button className="px-4 py-1.5 bg-gray-100 rounded-lg text-sm font-semibold hover:bg-gray-200">
-                  アーカイブ
-                </button>
-                <button className="p-1.5 hover:opacity-50">
-                  <SettingsIcon className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-            <div className="flex gap-8 mb-4">
-              <span className="text-sm"><strong>{currentUser.posts}</strong> 投稿</span>
-              <span className="text-sm"><strong>{currentUser.followers}</strong> フォロワー</span>
-              <span className="text-sm"><strong>{currentUser.following}</strong> フォロー中</span>
-            </div>
-            <div className="text-sm">
-              <p className="font-semibold">{currentUser.displayName}</p>
-              <p className="whitespace-pre-line text-gray-800">{currentUser.bio}</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Story Highlights */}
-        <div className="flex gap-6 mb-8 overflow-x-auto pb-2">
-          {['旅行', 'グルメ', 'ペット', '日常'].map((highlight) => (
-            <div key={highlight} className="flex flex-col items-center gap-1 flex-shrink-0">
-              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border border-gray-200 flex items-center justify-center bg-gray-50">
-                <span className="text-2xl">
-                  {highlight === '旅行' ? '✈️' : highlight === 'グルメ' ? '🍜' : highlight === 'ペット' ? '🐕' : '📸'}
-                </span>
-              </div>
-              <span className="text-xs">{highlight}</span>
-            </div>
-          ))}
-          <div className="flex flex-col items-center gap-1 flex-shrink-0">
-            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border border-gray-200 flex items-center justify-center bg-gray-50">
-              <span className="text-2xl text-gray-300">+</span>
-            </div>
-            <span className="text-xs">新規</span>
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="border-t border-gray-200 flex justify-center gap-16">
-          <button
-            onClick={() => setProfileTab('posts')}
-            className={`flex items-center gap-1 py-3 text-xs font-semibold tracking-wider uppercase border-t -mt-px ${profileTab === 'posts' ? 'border-black text-black' : 'border-transparent text-gray-400'}`}
-          >
-            <GridIcon className="w-3 h-3" /> 投稿
-          </button>
-          <button
-            onClick={() => setProfileTab('saved')}
-            className={`flex items-center gap-1 py-3 text-xs font-semibold tracking-wider uppercase border-t -mt-px ${profileTab === 'saved' ? 'border-black text-black' : 'border-transparent text-gray-400'}`}
-          >
-            <BookmarkIcon className="w-3 h-3" /> 保存
-          </button>
-          <button
-            onClick={() => setProfileTab('tagged')}
-            className={`flex items-center gap-1 py-3 text-xs font-semibold tracking-wider uppercase border-t -mt-px ${profileTab === 'tagged' ? 'border-black text-black' : 'border-transparent text-gray-400'}`}
-          >
-            タグ付け
-          </button>
-        </div>
-
-        {/* Posts Grid */}
-        <div className="grid grid-cols-3 gap-1 mt-1">
-          {posts.map((post) => (
-            <div key={post.id} className="aspect-square bg-gray-100 relative group cursor-pointer overflow-hidden">
-              <img src={post.images[0]} alt="" className="w-full h-full object-cover" />
-              <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-6">
-                <div className="flex items-center gap-1 text-white font-bold">
-                  <HeartIcon filled className="w-5 h-5" />
-                  <span>{post.likes.toLocaleString()}</span>
-                </div>
-                <div className="flex items-center gap-1 text-white font-bold">
-                  <CommentIcon className="w-5 h-5" />
-                  <span>{post.comments.length}</span>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  // Notifications Panel
-  const NotificationsPanel = () => (
-    <div className="absolute left-[280px] top-0 w-[400px] bg-white rounded-xl shadow-2xl border border-gray-200 p-6 z-50">
-      <h3 className="font-bold text-base mb-4">通知</h3>
-      <div className="space-y-4">
-        <p className="text-sm font-semibold text-gray-500">今日</p>
-        {users.slice(0, 4).map((user) => (
-          <div key={user.id} className="flex items-center gap-3">
-            <Avatar user={user} size="w-10 h-10" />
-            <p className="text-sm flex-1">
-              <span className="font-semibold">{user.username}</span>
-              <span className="text-gray-600"> があなたの投稿にいいねしました。</span>
-              <span className="text-gray-400 ml-1">2時間</span>
-            </p>
-            <div className={`w-10 h-10 rounded bg-gradient-to-br ${getAvatarGradient(user.id)} flex items-center justify-center`}>
-              <span className="text-white text-xs font-bold">{getInitials(user.username)}</span>
-            </div>
-          </div>
-        ))}
-        <p className="text-sm font-semibold text-gray-500 pt-2">今週</p>
-        {users.slice(4, 7).map((user) => (
-          <div key={user.id} className="flex items-center gap-3">
-            <Avatar user={user} size="w-10 h-10" />
-            <p className="text-sm flex-1">
-              <span className="font-semibold">{user.username}</span>
-              <span className="text-gray-600"> のフォローを始めました。</span>
-              <span className="text-gray-400 ml-1">3日</span>
-            </p>
-            <button className="px-4 py-1.5 bg-blue-500 text-white text-sm font-semibold rounded-lg hover:bg-blue-600">
-              フォロー
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  // Mobile Bottom Nav
-  const MobileNav = () => (
-    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-40 lg:hidden">
-      <div className="flex items-center justify-around py-3">
-        <button onClick={() => setCurrentPage('home')}>
-          <HomeIcon filled={currentPage === 'home'} className="w-6 h-6" />
-        </button>
-        <button onClick={() => setCurrentPage('explore')}>
-          <SearchIcon className="w-6 h-6" />
-        </button>
-        <button onClick={() => setCurrentPage('reels')}>
-          <ReelsIcon filled={currentPage === 'reels'} className="w-6 h-6" />
-        </button>
-        <button>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="2" y="2" width="20" height="20" rx="5" />
-            <path d="M16 11.37A4 4 0 1112.63 8 4 4 0 0116 11.37z" />
-            <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
-          </svg>
-        </button>
-        <button onClick={() => setCurrentPage('profile')}>
-          <div className={`w-6 h-6 rounded-full bg-gradient-to-br ${getAvatarGradient('me')} flex items-center justify-center ${currentPage === 'profile' ? 'ring-2 ring-black' : ''}`}>
-            <span className="text-white font-bold text-[7px]">Y</span>
-          </div>
+  const ProfilePage = () => (
+    <div className="max-w-[935px] mx-auto px-4 py-8">
+      <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
+        <div className="text-4xl mb-4">👤</div>
+        <h2 className="text-lg font-semibold mb-2">プロフィール</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          プロフィール機能にはログインが必要です。
+        </p>
+        <button
+          onClick={() => setCurrentPage('api')}
+          className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600"
+        >
+          🔌 APIビューアーへ
         </button>
       </div>
-    </nav>
-  );
-
-  // Reels Page
-  const ReelsPage = () => (
-    <div className="max-w-[420px] mx-auto py-4 space-y-4">
-      {posts.slice(0, 2).map((post, idx) => (
-        <div key={idx} className="relative rounded-lg overflow-hidden bg-black aspect-[9/16] max-h-[85vh]">
-          <img src={post.images[0]} alt="" className="w-full h-full object-cover" />
-          {/* Overlay */}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
-          {/* Right actions */}
-          <div className="absolute right-3 bottom-20 flex flex-col items-center gap-5">
-            <button className="flex flex-col items-center">
-              <HeartIcon className="w-7 h-7 text-white" />
-              <span className="text-white text-xs mt-1">{post.likes}</span>
-            </button>
-            <button className="flex flex-col items-center">
-              <CommentIcon className="w-7 h-7 text-white" />
-              <span className="text-white text-xs mt-1">{post.comments.length}</span>
-            </button>
-            <button className="flex flex-col items-center">
-              <ShareIcon className="w-7 h-7 text-white" />
-            </button>
-            <button>
-              <MoreIcon className="w-7 h-7 text-white" />
-            </button>
-          </div>
-          {/* Bottom info */}
-          <div className="absolute bottom-4 left-3 right-16">
-            <div className="flex items-center gap-2 mb-2">
-              <Avatar user={post.user} size="w-8 h-8" />
-              <span className="text-white text-sm font-semibold">{post.user.username}</span>
-              <button className="text-white text-xs border border-white rounded px-2 py-0.5">フォロー</button>
-            </div>
-            <p className="text-white text-sm line-clamp-2">{post.caption}</p>
-          </div>
-        </div>
-      ))}
     </div>
   );
 
   // Messages Page
   const MessagesPage = () => (
-    <div className="max-w-[935px] mx-auto h-[calc(100vh-60px)] flex border border-gray-200 rounded-lg overflow-hidden bg-white">
-      {/* Chat list */}
-      <div className="w-[350px] border-r border-gray-200 flex flex-col">
-        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 className="text-lg font-bold">{currentUser.username}</h2>
-          <button><PlusIcon className="w-5 h-5" /></button>
-        </div>
-        <div className="p-3">
-          <input
-            type="text"
-            placeholder="検索"
-            className="w-full px-3 py-2 bg-gray-100 rounded-lg text-sm outline-none"
-          />
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          {users.slice(0, 6).map((user) => (
-            <div key={user.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer">
-              <Avatar user={user} size="w-12 h-12" />
-              <div className="flex-1">
-                <p className="text-sm font-semibold">{user.username}</p>
-                <p className="text-xs text-gray-500">アクティブ 2時間前</p>
-              </div>
-              <div className="w-2 h-2 bg-blue-500 rounded-full" />
-            </div>
-          ))}
-        </div>
-      </div>
-      {/* Chat area */}
-      <div className="flex-1 flex flex-col items-center justify-center">
-        <div className="w-20 h-20 rounded-full border-2 border-black flex items-center justify-center mb-4">
-          <MessageIcon className="w-10 h-10" />
-        </div>
-        <h3 className="text-lg font-semibold mb-1">メッセージ</h3>
-        <p className="text-sm text-gray-500 mb-4">友達やグループにメッセージを送りましょう</p>
-        <button className="px-4 py-2 bg-blue-500 text-white text-sm font-semibold rounded-lg hover:bg-blue-600">
-          メッセージを送信
-        </button>
+    <div className="max-w-[935px] mx-auto px-4 py-8">
+      <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
+        <div className="text-4xl mb-4">💬</div>
+        <h2 className="text-lg font-semibold mb-2">メッセージ</h2>
+        <p className="text-sm text-gray-500">
+          メッセージ機能にはログインが必要です。
+        </p>
       </div>
     </div>
   );
 
-  // Create Post Modal
-  const CreatePostModal = () => {
-    const [step, setStep] = useState<'upload' | 'edit' | 'share'>('upload');
-    
-    return (
-      <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-        <div className="bg-white rounded-xl w-full max-w-[700px] overflow-hidden">
-          <div className="flex items-center justify-between p-3 border-b border-gray-200">
-            <button onClick={() => setCurrentPage('home')} className="text-sm">
-              <CloseIcon className="w-5 h-5" />
-            </button>
-            <h3 className="font-semibold">新規投稿</h3>
-            <button className="text-sm font-semibold text-blue-500">
-              {step === 'upload' ? '次へ' : 'シェア'}
-            </button>
-          </div>
-          <div className="aspect-square flex items-center justify-center bg-gray-50">
-            {step === 'upload' ? (
-              <div className="text-center">
-                <svg className="w-20 h-20 mx-auto mb-4 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <circle cx="8.5" cy="8.5" r="1.5" />
-                  <path d="M21 15l-5-5L5 21" />
-                </svg>
-                <p className="text-xl font-light mb-4">写真と動画 dragged here</p>
-                <button className="px-4 py-2 bg-blue-500 text-white text-sm font-semibold rounded-lg">
-                  PCから選択
-                </button>
-              </div>
-            ) : (
-              <div className="text-center text-gray-400">
-                <p>プレビュー</p>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // Render page content
   const renderContent = () => {
     switch (currentPage) {
-      case 'home':
-        return (
-          <div className="flex justify-center">
-            <div className="w-full max-w-[470px]">
-              <StoriesBar />
-              {posts.map((post) => (
-                <PostCard key={post.id} post={post} />
-              ))}
-            </div>
-            <RightSidebar />
-          </div>
-        );
-      case 'explore':
-        return <ExplorePage />;
-      case 'reels':
-        return <ReelsPage />;
-      case 'messages':
-        return <MessagesPage />;
-      case 'profile':
-        return <ProfilePage />;
-      case 'notifications':
-        return <ExplorePage />;
-      default:
-        return null;
+      case 'api': return <ApiViewerPage />;
+      case 'home': return <HomePage />;
+      case 'explore': return <ExplorePage />;
+      case 'reels': return <HomePage />;
+      case 'messages': return <MessagesPage />;
+      case 'profile': return <ProfilePage />;
+      default: return <ApiViewerPage />;
     }
   };
 
   return (
     <div className="min-h-screen bg-gray-50">
       <Sidebar />
-      
-      {/* Main content */}
-      <main className={`${sidebarCollapsed ? 'ml-[72px]' : 'ml-[245px]'} transition-all duration-300 pb-16 lg:pb-0`}>
-        <div className="py-6 px-4">
-          {renderContent()}
-        </div>
+      <main className={`${sidebarCollapsed ? 'ml-[72px]' : 'ml-[245px]'} transition-all duration-300`}>
+        {renderContent()}
       </main>
-
-      {/* Notifications */}
-      {showNotifications && currentPage === 'notifications' && <NotificationsPanel />}
-
-      {/* Create Post */}
-      {currentPage === 'create' && <CreatePostModal />}
-
-      {/* Story Viewer */}
-      <StoryViewer />
-
-      {/* Mobile Nav */}
-      <MobileNav />
     </div>
   );
 }
