@@ -3,12 +3,14 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import puppeteer from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 3000;
-const INSTAGRAM_HOST = 'www.instagram.com';
+const INSTAGRAM_URL = 'https://www.instagram.com/?hl=ja';
 
 // MIME types for static files
 const MIME_TYPES = {
@@ -26,166 +28,240 @@ const MIME_TYPES = {
   '.woff2': 'font/woff2',
 };
 
-// Proxy request to Instagram
+// Cache for rendered pages
+const pageCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+let browser = null;
+
+// Initialize browser
+async function getBrowser() {
+  if (!browser || !browser.isConnected()) {
+    browser = await puppeteer.launch({
+      executablePath: await chromium.executablePath(),
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      headless: chromium.headless === 'new' ? 'new' : true,
+    });
+  }
+  return browser;
+}
+
+// Render Instagram page with Puppeteer
+async function renderInstagramPage() {
+  const cacheKey = 'instagram_home';
+  const cached = pageCache.get(cacheKey);
+  
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    console.log('Serving from cache');
+    return cached.html;
+  }
+
+  console.log('Rendering with Puppeteer...');
+  const browser = await getBrowser();
+  const page = await browser.newPage();
+
+  try {
+    // Set a realistic user agent
+    await page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    );
+
+    // Set viewport
+    await page.setViewport({ width: 1920, height: 1080 });
+
+    // Navigate to Instagram
+    await page.goto(INSTAGRAM_URL, {
+      waitUntil: 'networkidle2',
+      timeout: 30000,
+    });
+
+    // Wait a bit for dynamic content
+    await page.waitForTimeout(2000);
+
+    // Remove iframe detection scripts
+    await page.evaluate(() => {
+      // Override window.top and window.parent
+      Object.defineProperty(window, 'top', { get: () => window });
+      Object.defineProperty(window, 'parent', { get: () => window });
+
+      // Remove any frame-buster scripts
+      const scripts = document.querySelectorAll('script');
+      scripts.forEach(script => {
+        const content = script.textContent || '';
+        if (content.includes('window.top') || content.includes('top.location')) {
+          script.remove();
+        }
+      });
+
+      // Remove CSP meta tags
+      const metas = document.querySelectorAll('meta[http-equiv]');
+      metas.forEach(meta => {
+        const httpEquiv = meta.getAttribute('http-equiv') || '';
+        if (httpEquiv.toLowerCase().includes('content-security-policy') || 
+            httpEquiv.toLowerCase().includes('x-frame-options')) {
+          meta.remove();
+        }
+      });
+    });
+
+    // Get the rendered HTML
+    const html = await page.content();
+
+    // Cache the result
+    pageCache.set(cacheKey, {
+      html,
+      timestamp: Date.now(),
+    });
+
+    console.log('Page rendered successfully');
+    return html;
+  } catch (error) {
+    console.error('Error rendering page:', error);
+    throw error;
+  } finally {
+    await page.close();
+  }
+}
+
+// Proxy request to Instagram (fallback for non-HTML resources)
 function proxyToInstagram(req, res, targetPath) {
+  const fakeUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+  
   const options = {
-    hostname: INSTAGRAM_HOST,
+    hostname: 'www.instagram.com',
     port: 443,
     path: targetPath || '/',
     method: req.method,
     headers: {
-      ...req.headers,
-      'host': INSTAGRAM_HOST,
-      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'accept-language': 'ja,en;q=0.9',
-      'user-agent': req.headers['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'host': 'www.instagram.com',
+      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+      'accept-language': 'ja,en-US;q=0.9,en;q=0.8',
       'accept-encoding': 'identity',
+      'user-agent': fakeUserAgent,
+      'referer': 'https://www.instagram.com/',
+      'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-site': 'same-origin',
+      'upgrade-insecure-requests': '1',
+      'cache-control': 'max-age=0',
     },
   };
 
-  // Remove headers that cause issues
-  delete options.headers['connection'];
-  delete options.headers['referer'];
-  delete options.headers['origin'];
+  if (req.headers['cookie']) {
+    options.headers['cookie'] = req.headers['cookie'];
+  }
 
   const proxyReq = https.request(options, (proxyRes) => {
-    // Remove security headers that block embedding
     const headers = { ...proxyRes.headers };
     delete headers['x-frame-options'];
     delete headers['content-security-policy'];
     delete headers['content-security-policy-report-only'];
     delete headers['cross-origin-opener-policy'];
     delete headers['cross-origin-embedder-policy'];
+    delete headers['cross-origin-resource-policy'];
     delete headers['strict-transport-security'];
+    delete headers['permissions-policy'];
+    delete headers['feature-policy'];
+    
+    if (proxyRes.headers['set-cookie']) {
+      headers['set-cookie'] = proxyRes.headers['set-cookie'];
+    }
 
-    // Handle redirects
     if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && headers.location) {
-      // Rewrite redirect URLs
       let location = headers.location;
-      if (location.startsWith('/')) {
-        location = location; // Keep relative
+      if (location.startsWith('https://www.instagram.com')) {
+        location = '/ig' + location.substring('https://www.instagram.com'.length);
+      } else if (location.startsWith('https://instagram.com')) {
+        location = '/ig' + location.substring('https://instagram.com'.length);
       }
-      res.writeHead(proxyRes.statusCode, {
-        ...headers,
-        location: location,
-      });
+      res.writeHead(proxyRes.statusCode, { ...headers, location });
       res.end();
       return;
     }
 
-    // For HTML responses, modify content to work in our proxy
-    const contentType = proxyRes.headers['content-type'] || '';
-
-    if (contentType.includes('text/html')) {
-      let body = '';
-      proxyRes.setEncoding('utf-8');
-      proxyRes.on('data', (chunk) => {
-        body += chunk;
-      });
-      proxyRes.on('end', () => {
-        // Inject base tag and modify links
-        let modified = body;
-
-        // Add base tag for relative URLs
-        if (!modified.includes('<base')) {
-          modified = modified.replace(
-            '<head>',
-            `<head><base href="https://www.instagram.com/">`
-          );
-        }
-
-        // Remove X-Frame-Buster scripts
-        modified = modified.replace(
-          /if\s*\(\s*window\.top\s*!==?\s*window\.self\s*\).*?;/g,
-          '// frame-buster removed'
-        );
-        modified = modified.replace(
-          /top\.location\s*=\s*self\.location/g,
-          '// removed'
-        );
-        modified = modified.replace(
-          /self\.location\s*=\s*top\.location/g,
-          '// removed'
-        );
-
-        // Remove CSP meta tags
-        modified = modified.replace(
-          /<meta[^>]*http-equiv=["']content-security-policy["'][^>]*>/gi,
-          ''
-        );
-
-        delete headers['content-length'];
-        headers['content-type'] = 'text/html; charset=utf-8';
-
-        res.writeHead(proxyRes.statusCode, headers);
-        res.end(modified);
-      });
-    } else {
-      // For non-HTML, pipe directly
-      delete headers['content-length'];
-      res.writeHead(proxyRes.statusCode, headers);
-      proxyRes.pipe(res);
-    }
+    delete headers['content-length'];
+    res.writeHead(proxyRes.statusCode, headers);
+    proxyRes.pipe(res);
   });
 
   proxyReq.on('error', (err) => {
     console.error('Proxy error:', err.message);
     res.writeHead(502, { 'content-type': 'text/html; charset=utf-8' });
-    res.end(`
-      <html>
-        <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
-          <div style="text-align: center;">
-            <h2>Proxy Error</h2>
-            <p>${err.message}</p>
-            <a href="/">Go Home</a>
-          </div>
-        </body>
-      </html>
-    `);
+    res.end(`<html><body><h2>Proxy Error</h2><p>${err.message}</p></body></html>`);
   });
 
   req.pipe(proxyReq);
 }
 
-// Serve static files from dist/
-function serveStatic(res, filePath) {
-  const ext = path.extname(filePath);
-  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      // Try index.html for SPA routing
-      const indexPath = path.join(__dirname, 'dist', 'index.html');
-      fs.readFile(indexPath, (err2, indexData) => {
-        if (err2) {
-          res.writeHead(404);
-          res.end('Not Found');
-          return;
-        }
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        res.end(indexData);
-      });
-      return;
-    }
-    res.writeHead(200, { 'content-type': contentType });
-    res.end(data);
-  });
-}
-
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const pathname = url.pathname;
 
   console.log(`${req.method} ${pathname}`);
 
-  // Health check endpoint
+  // Health check
   if (pathname === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
     return;
   }
 
-  // Proxy Instagram requests
+  // Instagram proxy with Puppeteer rendering
+  if (pathname === '/ig/' || pathname === '/ig') {
+    try {
+      const html = await renderInstagramPage();
+      
+      // Inject base tag and additional overrides
+      let modifiedHtml = html;
+      
+      if (!modifiedHtml.includes('<base')) {
+        modifiedHtml = modifiedHtml.replace(
+          '<head>',
+          '<head><base href="https://www.instagram.com/">'
+        );
+      }
+
+      // Add override script at the very beginning
+      const overrideScript = `
+<script>
+(function() {
+  try {
+    Object.defineProperty(window, 'top', { get: function() { return window; } });
+    Object.defineProperty(window, 'parent', { get: function() { return window; } });
+  } catch(e) {}
+})();
+</script>`;
+
+      if (modifiedHtml.includes('<head>')) {
+        modifiedHtml = modifiedHtml.replace('<head>', '<head>' + overrideScript);
+      }
+
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'x-frame-options': 'SAMEORIGIN',
+      });
+      res.end(modifiedHtml);
+    } catch (error) {
+      console.error('Render error:', error);
+      res.writeHead(500, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(`
+        <html>
+          <body style="font-family: sans-serif; padding: 20px;">
+            <h2>Rendering Error</h2>
+            <p>${error.message}</p>
+            <p><a href="https://www.instagram.com/?hl=ja" target="_blank">Open Instagram directly</a></p>
+          </body>
+        </html>
+      `);
+    }
+    return;
+  }
+
+  // Other Instagram resources (CSS, JS, images) - use simple proxy
   if (pathname.startsWith('/ig/')) {
     const igPath = pathname.slice(3) || '/';
     const igQuery = url.search || '';
@@ -193,12 +269,11 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Main page - show Instagram in iframe via our proxy
+  // Main page
   if (pathname === '/' || pathname === '/index.html') {
     const indexPath = path.join(__dirname, 'dist', 'index.html');
     fs.readFile(indexPath, 'utf-8', (err, data) => {
       if (err) {
-        // Fallback: serve a simple page if dist/ doesn't exist
         res.writeHead(200, {
           'content-type': 'text/html; charset=utf-8',
           'x-frame-options': 'SAMEORIGIN',
@@ -255,7 +330,37 @@ const server = http.createServer((req, res) => {
 
   // Serve static assets from dist/
   const staticPath = path.join(__dirname, 'dist', pathname);
-  serveStatic(res, staticPath);
+  const ext = path.extname(staticPath);
+  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+
+  fs.readFile(staticPath, (err, data) => {
+    if (err) {
+      const indexPath = path.join(__dirname, 'dist', 'index.html');
+      fs.readFile(indexPath, (err2, indexData) => {
+        if (err2) {
+          res.writeHead(404);
+          res.end('Not Found');
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.end(indexData);
+      });
+      return;
+    }
+    res.writeHead(200, { 'content-type': contentType });
+    res.end(data);
+  });
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  if (browser) {
+    await browser.close();
+  }
+  server.close(() => {
+    process.exit(0);
+  });
 });
 
 server.listen(PORT, () => {
