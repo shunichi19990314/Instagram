@@ -4,10 +4,10 @@ services:
     runtime: node
     region: oregon
     plan: free
-    buildCommand: npm install && npm run build
+    buildCommand: rm -rf node_modules package-lock.json && npm install && npm run build
     startCommand: node server.js
     envVars:
       - key: NODE_VERSION
-        value: 18.18.0
+        value: 20.11.0
       - key: PORT
         value: 3000

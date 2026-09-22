@@ -46,12 +46,22 @@ node server.js
 4. 以下の設定を入力:
    - **Name**: `instagram-viewer`（任意）
    - **Runtime**: `Node`
-   - **Build Command**: `npm install && npm run build`
+   - **Build Command**: `rm -rf node_modules package-lock.json && npm install && npm run build`
    - **Start Command**: `node server.js`
    - **Plan**: Free
 5. 環境変数を追加:
-   - `NODE_VERSION`: `18.18.0`
+   - `NODE_VERSION`: `20.11.0`
 6. 「Create Web Service」をクリック
+
+### トラブルシューティング
+
+**ビルドエラー: Cannot find native binding**
+
+Tailwind CSS v4はネイティブバインディング（@tailwindcss/oxide）を使用します。Node.js 18.xでは互換性がないため、必ずNode.js 20.x以上を使用してください。
+
+解決策:
+- `render.yaml`で`NODE_VERSION: 20.11.0`を指定済み
+- ビルドコマンドで`rm -rf node_modules package-lock.json`を実行してクリーンインストール
 
 ## 構成
 
