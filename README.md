@@ -1,21 +1,17 @@
-# Instagram oEmbed API Viewer
+# Instagram Viewer
 
-Instagramの公式oEmbed APIを使用して、投稿をサイト内に表示するWebアプリケーションです。
+Render上でInstagram（https://www.instagram.com/?hl=ja）を表示するWebアプリケーションです。
 
-## 機能
+## 仕組み
 
-- Instagram投稿URLからoEmbed APIで埋め込みHTMLを取得
-- 埋め込みオプション（maxwidth、hidecaption、omitscript）のカスタマイズ
-- 取得結果の保存・管理（LocalStorage）
-- APIレスポンスのJSON確認
-- Instagram embed.jsによるリアルタイムレンダリング
+Node.jsサーバーがInstagramへのリバースプロキシとして動作し、`X-Frame-Options`や`Content-Security-Policy`などの埋め込み制限ヘッダーを除去することで、iframe内での表示を可能にします。
 
-## API仕様
-
-- **エンドポイント**: `https://graph.facebook.com/v26.0/instagram_oembed`
-- **認証**: トークン不要（2026年6月15日以降）
-- **レート制限**: 1時間あたり1,000リクエスト
-- **対応形式**: /p/（投稿）、/reel/（リール）、/tv/（IGTV）
+```
+[ブラウザ] → [Renderサーバー (server.js)] → [www.instagram.com]
+                ↓
+         セキュリティヘッダー除去
+         frame-buster スクリプト除去
+```
 
 ## ローカル開発
 
@@ -23,70 +19,72 @@ Instagramの公式oEmbed APIを使用して、投稿をサイト内に表示す�
 # 依存関係のインストール
 npm install
 
-# 開発サーバーの起動
-npm run dev
-
-# プロダクションビルド
+# フロントエンドのビルド
 npm run build
 
-# ビルド結果のプレビュー
-npm run preview
+# サーバーの起動
+node server.js
+# → http://localhost:3000 でアクセス可能
 ```
 
 ## Renderへのデプロイ
 
-### 方法1: Blueprintを使用（推奨）
+### 方法1: Blueprint（推奨）
 
 1. このリポジトリをGitHubにプッシュ
 2. [Render Dashboard](https://dashboard.render.com/)にログイン
 3. 「New」→「Blueprint」をクリック
 4. GitHubリポジトリを選択
-5. `render.yaml`が自動検出され、設定が適用されます
+5. `render.yaml`が自動検出されます
 6. 「Create Resources」をクリック
 
 ### 方法2: 手動デプロイ
 
 1. [Render Dashboard](https://dashboard.render.com/)にログイン
-2. 「New」→「Static Site」をクリック
+2. 「New」→「Web Service」をクリック
 3. GitHubリポジトリを接続
 4. 以下の設定を入力:
    - **Name**: `instagram-viewer`（任意）
-   - **Branch**: `main`
+   - **Runtime**: `Node`
    - **Build Command**: `npm install && npm run build`
-   - **Publish Directory**: `dist`
-5. 「Create Static Site」をクリック
+   - **Start Command**: `node server.js`
+   - **Plan**: Free
+5. 環境変数を追加:
+   - `NODE_VERSION`: `18.18.0`
+6. 「Create Web Service」をクリック
 
-### 環境変数（オプション）
+## 構成
 
-Renderの環境変数セクションで以下を設定できます:
-
-- `NODE_VERSION`: `18.18.0`（Node.jsバージョン）
+```
+.
+├── server.js          # Node.jsプロキシサーバー
+├── src/
+│   ├── App.tsx        # フロントエンド（iframe表示UI）
+│   ├── main.tsx       # エントリーポイント
+│   └── index.css      # スタイル
+├── dist/              # ビルド出力（Vite）
+├── render.yaml        # Render Blueprint設定
+├── package.json
+└── vite.config.js
+```
 
 ## 技術スタック
 
-- **Frontend**: React 18 + TypeScript
-- **Build Tool**: Vite
-- **Styling**: Tailwind CSS
-- **API**: Instagram oEmbed API (Graph API v26.0)
-- **Deployment**: Render (Static Site)
+- **Frontend**: React 18 + TypeScript + Vite + Tailwind CSS
+- **Backend**: Node.js (http/https標準モジュールのみ)
+- **Deployment**: Render (Web Service)
 
-## CORS対応
+## 機能
 
-Instagram Graph APIはCORSをブロックするため、以下のプロキシサーバーを経由してアクセスします:
-
-1. `https://api.allorigins.win/raw?url=`
-2. `https://corsproxy.io/?`
-3. `https://api.codetabs.com/v1/proxy?quest=`
-
-本番環境では、独自のCORSプロキシサーバーを立てることを推奨します。
-
-## ライセンス
-
-MIT
+- プロキシモード: サーバー経由でInstagramを表示
+- ダイレクトモード: 直接iframeで表示を試行
+- 全画面表示切り替え
+- 再読み込み機能
+- 新規タブで開くリンク
 
 ## 注意事項
 
-- InstagramはMeta Platforms, Inc.の商標です
-- このアプリはInstagramの公式oEmbed APIを使用しています
-- 非公開投稿は埋め込みできません
-- APIのレート制限（1時間あたり1,000リクエスト）に注意してください
+- Instagramは公式にiframe埋め込みを許可していません
+- プロキシ経由でも、ログインや一部の機能が正常に動作しない場合があります
+- Instagramの利用規約に従って使用してください
+- 過度なリクエストは避けてください

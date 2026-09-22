@@ -1,20 +1,13 @@
 services:
   - type: web
     name: instagram-viewer
-    runtime: static
+    runtime: node
+    region: oregon
+    plan: free
     buildCommand: npm install && npm run build
-    staticPublishPath: ./dist
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
-    headers:
-      - path: /*
-        name: X-Frame-Options
-        value: SAMEORIGIN
-      - path: /*
-        name: X-Content-Type-Options
-        value: nosniff
+    startCommand: node server.js
     envVars:
       - key: NODE_VERSION
         value: 18.18.0
+      - key: PORT
+        value: 3000
